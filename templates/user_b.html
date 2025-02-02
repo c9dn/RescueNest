@@ -1,0 +1,149 @@
+# templates/user_b.html
+<!DOCTYPE html>
+<html>
+<head>
+    <title>User B - Create Stream</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    <link rel="stylesheet" href="https://cdn.simplecss.org/simple.min.css">
+    <style>
+        .container { text-align: center; }
+        #localVideo { transform: scaleX(-1); }
+        .message {
+            padding: 8px;
+            margin: 4px 0;
+            border-radius: 4px;
+        }
+        .user-b {
+            background-color: #e3f2fd;
+            text-align: right;
+        }
+        .user-a, .user-c {
+            background-color: #f5f5f5;
+            text-align: left;
+        }
+        .sender {
+            font-weight: bold;
+            margin-bottom: 4px;
+        }
+        #messages {
+            height: 300px;
+            overflow-y: auto;
+            border: 1px solid #ccc;
+            padding: 10px;
+            margin-bottom: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h2>Your Camera Stream</h2>
+        <video id="localVideo" width="640" height="480" autoplay></video>
+        <br>
+        <button id="startButton" onclick="startStream()">Start Streaming</button>
+        <button id="stopButton" onclick="stopStream()" disabled>Stop Streaming</button>
+    </div>
+    <div id="chat-container">
+        <ul id="messages" style="list-style-type: none; padding: 0;"></ul>
+        <input type="text" id="message-input" placeholder="Type a message...">
+        <button onclick="sendMessage()">Send</button>
+    </div>
+    <script>
+        const socket = io();
+        let mediaStream = null;
+        let streaming = false;
+        const videoElem = document.getElementById('localVideo');
+        const startBtn = document.getElementById('startButton');
+        const stopBtn = document.getElementById('stopButton');
+        const messages = document.getElementById('messages');
+        const messageInput = document.getElementById('message-input');
+        const userType = 'User B';
+
+        socket.on('connect', () => {
+            socket.emit('join', {room: 'stream', userType: userType});
+            socket.emit('join', {room: 'chat', userType: userType});
+        });
+
+        socket.on('message', (data) => {
+            const li = document.createElement('li');
+            li.className = `message ${data.userType.toLowerCase().replace(' ', '-')}`;
+            
+            const sender = document.createElement('div');
+            sender.className = 'sender';
+            sender.textContent = data.userType;
+            
+            const content = document.createElement('div');
+            content.textContent = data.message;
+            
+            li.appendChild(sender);
+            li.appendChild(content);
+            messages.appendChild(li);
+            
+            // Auto-scroll to bottom
+            messages.scrollTop = messages.scrollHeight;
+        });
+
+        function sendMessage() {
+            const message = messageInput.value.trim();
+            if (message) {
+                socket.emit('message', {
+                    room: 'chat',
+                    message: message,
+                    userType: userType
+                });
+                messageInput.value = '';
+            }
+        }
+
+        // Allow sending message with Enter key
+        messageInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                sendMessage();
+            }
+        });
+        
+        async function startStream() {
+            try {
+                mediaStream = await navigator.mediaDevices.getUserMedia({ video: true });
+                videoElem.srcObject = mediaStream;
+                streaming = true;
+                socket.emit('start_stream');
+                startBtn.disabled = true;
+                stopBtn.disabled = false;
+                
+                // Start sending frames
+                const canvas = document.createElement('canvas');
+                canvas.width = 640;
+                canvas.height = 480;
+                const ctx = canvas.getContext('2d');
+                
+                function sendFrame() {
+                    if (!streaming) return;
+                    ctx.drawImage(videoElem, 0, 0, canvas.width, canvas.height);
+                    canvas.toBlob(blob => {
+                        const reader = new FileReader();
+                        reader.onload = () => {
+                            socket.emit('video_frame', new Uint8Array(reader.result));
+                        };
+                        reader.readAsArrayBuffer(blob);
+                    }, 'image/jpeg', 0.7);
+                    setTimeout(sendFrame, 33); // ~30 FPS
+                }
+                
+                sendFrame();
+            } catch (err) {
+                console.error('Error accessing camera:', err);
+            }
+        }
+        
+        function stopStream() {
+            if (mediaStream) {
+                mediaStream.getTracks().forEach(track => track.stop());
+                streaming = false;
+                socket.emit('stop_stream');
+                startBtn.disabled = false;
+                stopBtn.disabled = true;
+            }
+        }
+    </script>
+</body>
+</html>
